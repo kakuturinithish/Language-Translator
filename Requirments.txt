@@ -1,10 +1,6 @@
-flask
-gunicorn
-torch --index-url https://download.pytorch.org/whl/cpu
-transformers
-sentencepiece
-sacremoses
-groq
-python-docx
-PyPDF2
-python-dotenv
+flask==3.0.3
+gunicorn==21.2.0
+transformers==4.44.2
+torch==2.4.0
+python-docx==1.1.2
+PyPDF2==3.0.1

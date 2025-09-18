@@ -1,185 +1,181 @@
 import os
-from datetime import datetime
-from flask import Flask, request, render_template_string, jsonify, redirect, url_for, flash, send_from_directory
-from werkzeug.utils import secure_filename
+from flask import Flask, request, jsonify, send_file
 from transformers import pipeline
-import docx
-from PyPDF2 import PdfReader
+from werkzeug.utils import secure_filename
+from docx import Document
+import fitz  # PyMuPDF for PDF handling
 
-# Flask setup
+# Initialize Flask app
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
+app.config["UPLOAD_FOLDER"] = "/tmp"
 
-UPLOAD_FOLDER = "uploads"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-
-ALLOWED_EXTENSIONS = {"txt", "docx", "pdf"}
-
-# Cache models
-MODEL_CACHE = {}
-
-# Language → Model mapping
-LANG_TO_MODEL = {
-    "pt": "Helsinki-NLP/opus-mt-pt-en",  # Portuguese
-    "es": "Helsinki-NLP/opus-mt-es-en",  # Spanish
-    "fr": "Helsinki-NLP/opus-mt-fr-en",  # French
-    "de": "Helsinki-NLP/opus-mt-de-en",  # German
-    "it": "Helsinki-NLP/opus-mt-it-en",  # Italian
-    "default": "Helsinki-NLP/opus-mt-mul-en",  # fallback multilingual
+# Load translation pipelines
+translators = {
+    "es-en": pipeline("translation", model="Helsinki-NLP/opus-mt-es-en"),  # Spanish → English
+    "pt-en": pipeline("translation", model="Helsinki-NLP/opus-mt-pt-en"),  # Portuguese → English
+    "fr-en": pipeline("translation", model="Helsinki-NLP/opus-mt-fr-en"),  # French → English
 }
 
-
-# ---------------------- Helpers ----------------------
-def allowed_file(filename):
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
-
-
-def read_file_content(filepath):
-    ext = filepath.rsplit(".", 1)[1].lower()
-    if ext == "txt":
-        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-            return f.read()
-    elif ext == "docx":
-        doc = docx.Document(filepath)
-        return "\n".join([p.text for p in doc.paragraphs])
-    elif ext == "pdf":
-        pdf = PdfReader(filepath)
-        return "\n".join([page.extract_text() or "" for page in pdf.pages])
-    return ""
-
-
-def get_translator(src_lang):
-    model_name = LANG_TO_MODEL.get(src_lang, LANG_TO_MODEL["default"])
-    if model_name not in MODEL_CACHE:
-        MODEL_CACHE[model_name] = pipeline("translation", model=model_name)
-    return MODEL_CACHE[model_name]
-
-
-def translate_text_preserve_format(text, src_lang, tgt_lang="en"):
-    translator = get_translator(src_lang)
-
-    chunks = [text[i:i + 300] for i in range(0, len(text), 300)]
-    translations = []
-    for chunk in chunks:
-        out = translator(chunk, max_length=512)
-        translations.append(out[0]["translation_text"])
-    return " ".join(translations)
-
-
-# Dummy language detector (replace with Groq later)
-def detect_language_with_groq(text):
-    # very naive check for demo
-    if "que" in text or "hola" in text:
-        return "es"
-    if "olá" in text or "obrigado" in text:
-        return "pt"
-    if "bonjour" in text:
-        return "fr"
-    if "danke" in text:
-        return "de"
-    return "en"
-
-
-# ---------------------- HTML ----------------------
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html>
-<head>
-    <title>AI Translator</title>
-</head>
-<body>
-    <h2>AI Translator (Multi-Language + Dialects)</h2>
-    <form method="POST" enctype="multipart/form-data">
-        <p>Upload File (.txt, .docx, .pdf):</p>
-        <input type="hidden" name="input_type" value="file">
-        <input type="file" name="file">
-        <button type="submit">Translate</button>
-    </form>
-    {% if translated_text %}
-        <h3>Detected: {{ detected_lang.upper() }}</h3>
-        <p><b>Processing:</b> {{ processing_info }}</p>
-        <pre>{{ translated_text }}</pre>
-        <a href="{{ download_url }}">Download File</a>
-    {% endif %}
-</body>
-</html>
-"""
-
-
-# ---------------------- Routes ----------------------
-@app.route("/", methods=["GET", "POST"])
+@app.route("/", methods=["GET"])
 def home():
-    if request.method == "POST":
-        input_type = request.form.get("input_type")
-        tgt_lang = "en"
+    return """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <title>Language Translator</title>
+      <style>
+        body { font-family: Arial, sans-serif; padding: 20px; max-width: 700px; margin: auto; }
+        textarea, input[type=file] { width: 100%; margin-bottom: 10px; }
+        textarea { height: 80px; }
+        select, button { padding: 10px; margin: 10px 0; }
+        .result { font-weight: bold; margin-top: 20px; white-space: pre-wrap; }
+      </style>
+    </head>
+    <body>
+      <h1>🌍 Language Translator</h1>
+      
+      <h3>Translate Text</h3>
+      <textarea id="inputText" placeholder="Type text here..."></textarea><br>
+      
+      <label for="lang">Choose language:</label>
+      <select id="lang">
+        <option value="es-en">Spanish → English</option>
+        <option value="pt-en">Portuguese → English</option>
+        <option value="fr-en">French → English</option>
+      </select><br>
+      
+      <button onclick="translateText()">Translate Text</button>
+      
+      <h3>Translate File (.txt, .pdf, .docx)</h3>
+      <input type="file" id="fileInput" accept=".txt,.pdf,.docx"><br>
+      <button onclick="translateFile()">Translate File</button>
+      
+      <div class="result" id="result"></div>
 
-        if input_type == "file":
-            if "file" not in request.files:
-                flash("No file uploaded.", "error")
-                return redirect(url_for("home"))
+      <script>
+        async function translateText() {
+          const text = document.getElementById("inputText").value;
+          const lang = document.getElementById("lang").value;
+          const response = await fetch("/translate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: text, lang: lang })
+          });
+          const data = await response.json();
+          document.getElementById("result").innerText = data.translation || data.error;
+        }
 
-            file = request.files["file"]
-            if file.filename == "":
-                flash("No file selected.", "error")
-                return redirect(url_for("home"))
+        async function translateFile() {
+          const file = document.getElementById("fileInput").files[0];
+          const lang = document.getElementById("lang").value;
+          if (!file) {
+            alert("Please select a file first!");
+            return;
+          }
+          const formData = new FormData();
+          formData.append("file", file);
+          formData.append("lang", lang);
 
-            if file and allowed_file(file.filename):
-                filename = secure_filename(file.filename)
-                filepath = os.path.join(UPLOAD_FOLDER, filename)
-                file.save(filepath)
+          const response = await fetch("/translate-file", {
+            method: "POST",
+            body: formData
+          });
 
-                try:
-                    start_time = datetime.now()
-                    content = read_file_content(filepath)
+          if (response.headers.get("Content-Type").includes("application/json")) {
+            const data = await response.json();
+            document.getElementById("result").innerText = data.translation || data.error;
+          } else {
+            // File download
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = file.name.replace(/(\.\w+)$/, "_translated$1");
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            document.getElementById("result").innerText = "✅ File translated and downloaded!";
+          }
+        }
+      </script>
+    </body>
+    </html>
+    """
 
-                    if not content.strip():
-                        flash("The uploaded file appears empty.", "error")
-                        os.remove(filepath)
-                        return redirect(url_for("home"))
+@app.route("/translate", methods=["POST"])
+def translate_text():
+    data = request.get_json()
+    text = data.get("text", "")
+    lang = data.get("lang", "es-en")
 
-                    # Detect language
-                    src_lang = detect_language_with_groq(content)
+    if not text:
+        return jsonify({"error": "No text provided"}), 400
+    if lang not in translators:
+        return jsonify({"error": f"Unsupported language pair: {lang}"}), 400
 
-                    # Translate
-                    if src_lang == tgt_lang:
-                        translated_content = content
-                        flash("File already in English.", "success")
-                    else:
-                        translated_content = translate_text_preserve_format(content, src_lang, tgt_lang)
+    result = translators[lang](text)
+    return jsonify({"input": text, "translation": result[0]["translation_text"]})
 
-                    end_time = datetime.now()
-                    processing_time = (end_time - start_time).total_seconds()
+@app.route("/translate-file", methods=["POST"])
+def translate_file():
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+    
+    file = request.files["file"]
+    lang = request.form.get("lang", "es-en")
+    if file.filename == "":
+        return jsonify({"error": "Empty filename"}), 400
 
-                    # Save translated file
-                    output_filename = f"translated_{filename.rsplit('.',1)[0]}.txt"
-                    output_path = os.path.join(UPLOAD_FOLDER, output_filename)
-                    with open(output_path, "w", encoding="utf-8") as f:
-                        f.write(translated_content)
+    ext = os.path.splitext(file.filename)[1].lower()
+    filepath = os.path.join(app.config["UPLOAD_FOLDER"], secure_filename(file.filename))
+    file.save(filepath)
 
-                    os.remove(filepath)  # cleanup
+    try:
+        if ext == ".txt":
+            with open(filepath, "r", encoding="utf-8") as f:
+                text = f.read()
+            result = translators[lang](text)
+            translated_text = result[0]["translation_text"]
 
-                    return render_template_string(
-                        HTML_TEMPLATE,
-                        translated_text=translated_content[:2000] + "..." if len(translated_content) > 2000 else translated_content,
-                        download_url=url_for("download_file", filename=output_filename),
-                        detected_lang=src_lang,
-                        processing_info=f"{processing_time:.2f} sec"
-                    )
+            output_path = filepath.replace(".txt", "_translated.txt")
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(translated_text)
+            return send_file(output_path, as_attachment=True)
 
-                except Exception as e:
-                    if os.path.exists(filepath):
-                        os.remove(filepath)
-                    flash(f"Error processing file: {str(e)}", "error")
-                    return redirect(url_for("home"))
+        elif ext == ".pdf":
+            doc = fitz.open(filepath)
+            text = ""
+            for page in doc:
+                text += page.get_text("text") + "\n"
+            doc.close()
+            result = translators[lang](text)
+            translated_text = result[0]["translation_text"]
 
-    return render_template_string(HTML_TEMPLATE)
+            output_path = filepath.replace(".pdf", "_translated.txt")
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(translated_text)
+            return send_file(output_path, as_attachment=True)
 
+        elif ext == ".docx":
+            document = Document(filepath)
+            for para in document.paragraphs:
+                if para.text.strip():
+                    result = translators[lang](para.text)
+                    para.text = result[0]["translation_text"]
 
-@app.route("/download/<filename>")
-def download_file(filename):
-    return send_from_directory(UPLOAD_FOLDER, filename, as_attachment=True)
+            output_path = filepath.replace(".docx", "_translated.docx")
+            document.save(output_path)
+            return send_file(output_path, as_attachment=True)
 
+        else:
+            return jsonify({"error": "Unsupported file type"}), 400
 
-# ---------------------- Run ----------------------
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if os.path.exists(filepath):
+            os.remove(filepath)
+
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    app.run(host="0.0.0.0", port=10000)

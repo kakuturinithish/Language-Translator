@@ -6,3 +6,4 @@ groq
 python-docx
 python-dotenv
 PyPDF2
+gunicorn

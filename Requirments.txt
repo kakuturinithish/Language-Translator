@@ -1,7 +1,6 @@
 flask
-gunicorn
 transformers
 torch
-python-docx
-PyPDF2
 sentencepiece
+python-docx
+pymupdf

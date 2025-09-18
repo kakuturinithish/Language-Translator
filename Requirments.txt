@@ -4,3 +4,4 @@ torch
 sentencepiece
 python-docx
 pymupdf
+gunicorn

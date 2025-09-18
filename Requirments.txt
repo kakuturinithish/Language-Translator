@@ -1,9 +1,9 @@
 flask
-werkzeug
+gunicorn
+torch --index-url https://download.pytorch.org/whl/cpu
 transformers
-torch
+sentencepiece
+sacremoses
 groq
 python-docx
-python-dotenv
 PyPDF2
-gunicorn

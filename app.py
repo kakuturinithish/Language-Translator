@@ -19,7 +19,7 @@ load_dotenv()
 
 # Flask app
 app = Flask(__name__)
-app.secret_key = "supersecretkey"
+app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
 
 # Folders
 UPLOAD_FOLDER = "uploads"
@@ -487,6 +487,7 @@ def download_file(filename):
 if __name__ == "__main__":
     print("🚀 Starting Advanced AI Translator...")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
 
 
 

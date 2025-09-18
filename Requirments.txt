@@ -1,6 +1,6 @@
-flask==3.0.3
-gunicorn==21.2.0
-transformers==4.44.2
-torch==2.4.0
-python-docx==1.1.2
-PyPDF2==3.0.1
+flask
+gunicorn
+transformers
+torch
+python-docx
+PyPDF2

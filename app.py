@@ -7,6 +7,7 @@ from datetime import datetime
 from groq import Groq
 from docx import Document
 from PyPDF2 import PdfReader
+
 from dotenv import load_dotenv
 import threading
 import contextlib
@@ -486,3 +487,4 @@ def download_file(filename):
 if __name__ == "__main__":
     print("🚀 Starting Advanced AI Translator...")
     app.run(debug=True)
+

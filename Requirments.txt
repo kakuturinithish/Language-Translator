@@ -1,0 +1,8 @@
+flask
+werkzeug
+transformers
+torch
+groq
+python-docx
+python-dotenv
+PyPDF2
